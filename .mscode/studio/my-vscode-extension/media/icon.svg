@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <style>
+        @font-face {
+            font-family: 'VSCodeIcons';
+            font-weight: bold;
+            font-style: normal;
+        }
+        text {
+            font-family: 'Arial Black', 'VSCodeIcons', sans-serif;
+            font-weight: 900;
+            letter-spacing: -0.5px;
+        }
+    </style>
+    <rect x="2" y="2" width="12" height="12" fill="white" stroke="black" stroke-width="0.5"/>
+    <text x="3" y="11" font-size="8" fill="black">MS</text>
+</svg>

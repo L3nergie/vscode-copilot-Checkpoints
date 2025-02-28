@@ -1,0 +1,11 @@
+# Fichiers et dossiers système
+.DS_Store
+**/node_modules/
+**/.vscode/
+**/out/
+**/.mscode/timelines/
+**/.mscode/changes/
+
+# Fichiers de build
+*.js.map
+*.vsix
