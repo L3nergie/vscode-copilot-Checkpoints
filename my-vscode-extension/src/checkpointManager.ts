@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fsExtra from 'fs-extra';
+import { minimatch } from 'minimatch';
 
 export interface LineHistory {
     lineNumber: number;
@@ -62,6 +63,7 @@ export interface CheckpointLog {
     metadata: {
         description: string;
         isAutomatic: boolean;
+        isInitialState?: boolean;
         vscodeLogs?: any[];
     };
 }
@@ -95,6 +97,7 @@ export class CheckpointManager {
         
         this.ensureDirectories();
         this.loadExistingTimelines();
+        this.ensureInitialState();
         
         // Charger l'historique au démarrage
         const history = this.loadHistory();
@@ -660,5 +663,95 @@ export class CheckpointManager {
             return null;
         }
         return miniMap;
+    }
+
+    private async ensureInitialState() {
+        const initialStateDir = path.join(this.workspaceRoot, '.mscode', 'initial-state');
+        if (!fsExtra.existsSync(initialStateDir)) {
+            this.outputChannel.appendLine('Création de l\'état initial du projet...');
+            await fsExtra.mkdirp(initialStateDir);
+            
+            // Créer un checkpoint initial
+            const timestamp = Date.now();
+            const checkpointId = 'initial_state';
+            const files: Record<string, any> = {};
+            
+            // Sauvegarder l'état de tous les fichiers du projet
+            const allFiles = await this.getAllProjectFiles();
+            for (const filePath of allFiles) {
+                try {
+                    const content = await fsExtra.readFile(path.join(this.workspaceRoot, filePath), 'utf-8');
+                    files[filePath] = {
+                        snapshot: content,
+                        timeline: {
+                            filePath,
+                            changes: [],
+                            snapshots: [{
+                                timestamp,
+                                content
+                            }]
+                        }
+                    };
+                } catch (error) {
+                    this.outputChannel.appendLine(`Erreur lors de la sauvegarde de ${filePath}: ${error}`);
+                }
+            }
+            
+            // Créer le checkpoint initial
+            const initialCheckpoint: CheckpointLog = {
+                id: checkpointId,
+                timestamp,
+                files,
+                metadata: {
+                    description: 'État initial du projet',
+                    isAutomatic: true,
+                    isInitialState: true
+                }
+            };
+            
+            // Sauvegarder le checkpoint initial
+            const checkpointPath = path.join(initialStateDir, 'checkpoint.json');
+            await fsExtra.writeJson(checkpointPath, initialCheckpoint, { spaces: 2 });
+            
+            // Ajouter à l'historique
+            const history = this.loadHistory();
+            history.unshift(initialCheckpoint);
+            this.saveHistory(history);
+            
+            this.outputChannel.appendLine('État initial du projet sauvegardé');
+        }
+    }
+
+    private async getAllProjectFiles(): Promise<string[]> {
+        const ignorePatterns = [
+            '**/node_modules/**',
+            '**/.git/**',
+            '**/.mscode/**',
+            '**/out/**',
+            '**/dist/**'
+        ];
+        
+        const files: string[] = [];
+        const walk = async (dir: string) => {
+            const entries = await fsExtra.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                const relativePath = path.relative(this.workspaceRoot, fullPath);
+                
+                // Vérifier si le chemin doit être ignoré
+                if (ignorePatterns.some(pattern => minimatch(relativePath, pattern))) {
+                    continue;
+                }
+                
+                if (entry.isDirectory()) {
+                    await walk(fullPath);
+                } else {
+                    files.push(relativePath);
+                }
+            }
+        };
+        
+        await walk(this.workspaceRoot);
+        return files;
     }
 }

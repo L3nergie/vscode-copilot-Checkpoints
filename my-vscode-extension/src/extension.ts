@@ -3,7 +3,12 @@ import * as path from 'path';
 import * as fsExtra from 'fs-extra';
 import { CheckpointManager } from './checkpointManager';
 import { MSCodeViewProvider } from './MSCodeViewProvider';
-import { DeepSeekViewProvider } from './DeepSeekViewProvider';
+import { DeepSeekViewProvider } from './providers/DeepSeekViewProvider';
+import { MistralViewProvider } from './providers/MistralViewProvider';
+import { GeminiViewProvider } from './providers/GeminiViewProvider';
+import { GroqViewProvider } from './providers/GroqViewProvider';
+import { ClaudeViewProvider } from './providers/ClaudeViewProvider';
+import { OpenAIViewProvider } from './providers/OpenAIViewProvider';
 
 // Création d'un canal de sortie unique pour les logs
 export const mainOutputChannel = vscode.window.createOutputChannel('MSCode');
@@ -33,31 +38,44 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
-        mainOutputChannel.appendLine('Creation du MSCodeViewProvider...');
-        const mscodeProvider = new MSCodeViewProvider(context.extensionUri, checkpointManager, mainOutputChannel);
-        mainOutputChannel.appendLine('MSCodeViewProvider cree');
+        // Initialisation des providers
+        mainOutputChannel.appendLine('Initialisation des providers...');
         
-        mainOutputChannel.appendLine('Creation du DeepSeekViewProvider...');
+        // MSCode Provider
+        const mscodeProvider = new MSCodeViewProvider(context.extensionUri, checkpointManager, mainOutputChannel);
+        
+        // AI Providers
         const deepseekProvider = new DeepSeekViewProvider(context.extensionUri);
-        mainOutputChannel.appendLine('DeepSeekViewProvider cree');
+        const mistralProvider = new MistralViewProvider(context.extensionUri, mainOutputChannel);
+        const geminiProvider = new GeminiViewProvider(context.extensionUri, mainOutputChannel);
+        const groqProvider = new GroqViewProvider(context.extensionUri, mainOutputChannel);
+        const claudeProvider = new ClaudeViewProvider(context.extensionUri, mainOutputChannel);
+        const openaiProvider = new OpenAIViewProvider(context.extensionUri, mainOutputChannel);
         
         mainOutputChannel.appendLine('Enregistrement des providers...');
         try {
+            // Enregistrement du MSCode Provider
             context.subscriptions.push(
                 vscode.window.registerWebviewViewProvider(MSCodeViewProvider.viewType, mscodeProvider)
             );
             mainOutputChannel.appendLine('MSCodeViewProvider enregistre');
             
+            // Enregistrement des AI Providers
             context.subscriptions.push(
-                vscode.window.registerWebviewViewProvider('deepseekView', deepseekProvider)
+                vscode.window.registerWebviewViewProvider('deepseekView', deepseekProvider),
+                vscode.window.registerWebviewViewProvider(MistralViewProvider.viewType, mistralProvider),
+                vscode.window.registerWebviewViewProvider(GeminiViewProvider.viewType, geminiProvider),
+                vscode.window.registerWebviewViewProvider(GroqViewProvider.viewType, groqProvider),
+                vscode.window.registerWebviewViewProvider(ClaudeViewProvider.viewType, claudeProvider),
+                vscode.window.registerWebviewViewProvider(OpenAIViewProvider.viewType, openaiProvider)
             );
-            mainOutputChannel.appendLine('DeepSeekViewProvider enregistre');
+            mainOutputChannel.appendLine('AI Providers enregistres');
         } catch (error) {
             mainOutputChannel.appendLine(`ERREUR lors de l'enregistrement des providers: ${error}`);
             throw error;
         }
 
-        // Enregistrer la commande de rechargement
+        // Enregistrement de la commande de rechargement
         context.subscriptions.push(
             vscode.commands.registerCommand('mscode.reload', () => {
                 mainOutputChannel.appendLine('Rechargement de l\'extension...');

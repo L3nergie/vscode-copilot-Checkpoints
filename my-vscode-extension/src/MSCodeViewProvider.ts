@@ -170,6 +170,7 @@ export class MSCodeViewProvider implements vscode.WebviewViewProvider {
                     break;
 
                 case 'deleteCheckpoint':
+                    // TODO: voulez vous vraiment supprimer ce checkpoint
                     this.outputChannel.appendLine(`Suppression du checkpoint: ${message.checkpointId}`);
                     await this.deleteCheckpoint(message.checkpointId);
                     await this.refreshCheckpoints();
@@ -208,7 +209,50 @@ export class MSCodeViewProvider implements vscode.WebviewViewProvider {
             }
         });
     }
+
+    private async restoreCheckpoint(checkpointId: string) {
+        const checkpoint = await this.checkpointManager.getCheckpointDetails(checkpointId);
+        if (!checkpoint) return;
+
+        try {
+            // Restaurer chaque fichier du checkpoint
+            for (const [filePath, fileData] of Object.entries(checkpoint.files)) {
+                await this.checkpointManager.revertToState(filePath, checkpoint.timestamp);
+            }
+            vscode.window.showInformationMessage(`Restored to checkpoint: ${checkpoint.metadata.description}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error restoring checkpoint: ${error}`);
+        }
+    }
+
+    private async deleteCheckpoint(checkpointId: string) {
+        const checkpoint = await this.checkpointManager.getCheckpointDetails(checkpointId);
+        if (!checkpoint) return;
+
+        try {
+            // Supprimer le dossier du checkpoint
+            const checkpointDir = path.join(this._extensionUri.fsPath, '..', '.mscode', 'changes', checkpointId);
+            if (fsExtra.existsSync(checkpointDir)) {
+                fsExtra.removeSync(checkpointDir);
+            }
+
+            // Mettre à jour l'historique en retirant le checkpoint
+            let history = await this.checkpointManager.getAllCheckpoints();
+            history = history.filter((cp: CheckpointHistory) => cp.id !== checkpointId);
+            const historyFile = path.join(this._extensionUri.fsPath, '..', '.mscode', 'history.json');
+            fsExtra.writeJSONSync(historyFile, history, { spaces: 2 });
+
+            vscode.window.showInformationMessage(`Checkpoint deleted: ${checkpoint.metadata.description}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error deleting checkpoint: ${error}`);
+        }
+    }
+
     private _getWebviewContent(webview: vscode.Webview): string {
+        const scriptUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'mscode-webview.js')
+        );
+
         return `<!DOCTYPE html>
         <html lang="en">
         <head>
@@ -231,12 +275,51 @@ export class MSCodeViewProvider implements vscode.WebviewViewProvider {
                 .checkpoint-node {
                     position: relative;
                     display: flex;
-                    align-items: center;
+                    align-items: flex-start;
                     margin: 10px 0;
                     padding: 8px;
                     border-radius: 4px;
                     background: var(--vscode-editor-background);
                     border: 1px solid var(--vscode-widget-border);
+                    transition: all 0.3s ease;
+                }
+
+                .node-header {
+                    padding: 8px;
+                    border-radius: 4px;
+                    transition: background-color 0.2s;
+                }
+
+                .node-header:hover {
+                    background: var(--vscode-list-hoverBackground);
+                }
+
+                .node-details {
+                    max-height: 1000px;
+                    opacity: 1;
+                    overflow: hidden;
+                    transition: all 0.3s ease;
+                }
+
+                .checkpoint-node.collapsed .node-details {
+                    max-height: 0;
+                    opacity: 0;
+                    margin: 0;
+                    padding: 0;
+                }
+
+                .checkpoint-node.collapsed .node-time {
+                    margin-bottom: 0;
+                }
+
+                .node-header::after {
+                    content: '▼';
+                    float: right;
+                    transition: transform 0.3s ease;
+                }
+
+                .checkpoint-node.collapsed .node-header::after {
+                    transform: rotate(-90deg);
                 }
 
                 .checkpoint-node::before {
@@ -244,28 +327,104 @@ export class MSCodeViewProvider implements vscode.WebviewViewProvider {
                     position: absolute;
                     width: 2px;
                     height: calc(100% + 20px);
-                    background: var(--vscode-textLink-foreground);
+                    background: var(--vscode-errorForeground);
                     left: 15px;
                     top: -10px;
                     z-index: 0;
                 }
 
-                .checkpoint-node:last-child::before {
-                    height: 50%;
-                }
-
-                .checkpoint-node:first-child::before {
-                    top: 50%;
-                }
-
-                .node-dot {
+                .checkpoint-node .node-dot {
                     width: 12px;
                     height: 12px;
                     border-radius: 50%;
-                    background: var(--vscode-textLink-foreground);
+                    background: var(--vscode-errorForeground);
                     margin-right: 12px;
                     position: relative;
                     z-index: 1;
+                }
+
+                .checkpoint-node.initial-state .node-dot {
+                    background: var(--vscode-textLink-foreground);
+                }
+
+                .checkpoint-node.initial-state::before {
+                    background: var(--vscode-textLink-foreground);
+                }
+
+                .checkpoint-node.initial-state .latest-badge {
+                    background: var(--vscode-textLink-foreground);
+                    color: white;
+                }
+
+                .checkpoint-node.standard .node-dot,
+                .checkpoint-node.standard::before {
+                    background: var(--vscode-errorForeground);
+                }
+
+                .checkpoint-node.current .node-dot,
+                .checkpoint-node.current::before {
+                    background: var(--vscode-warningBackground);
+                }
+
+                .checkpoint-node.latest .node-dot,
+                .checkpoint-node.latest::before {
+                    background: var(--vscode-testing-iconPassed);
+                }
+
+                .confirmation-dialog {
+                    position: relative;
+                    background: var(--vscode-notifications-background);
+                    border: 1px solid var(--vscode-notifications-border);
+                    margin: 10px;
+                    padding: 12px;
+                    border-radius: 4px;
+                    animation: slideDown 0.3s ease-out;
+                }
+
+                @keyframes slideDown {
+                    from {
+                        opacity: 0;
+                        transform: translateY(-10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+
+                .confirmation-dialog .title {
+                    font-weight: bold;
+                    margin-bottom: 8px;
+                    color: var(--vscode-notificationsErrorIcon-foreground);
+                }
+
+                .confirmation-dialog .message {
+                    margin-bottom: 12px;
+                    font-size: 0.9em;
+                }
+
+                .confirmation-dialog .buttons {
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 8px;
+                }
+
+                .confirmation-dialog button {
+                    padding: 4px 12px;
+                    border: none;
+                    border-radius: 2px;
+                    cursor: pointer;
+                    font-size: 12px;
+                }
+
+                .confirmation-dialog .confirm {
+                    background: var(--vscode-notificationsErrorIcon-foreground);
+                    color: white;
+                }
+
+                .confirmation-dialog .cancel {
+                    background: var(--vscode-button-secondaryBackground);
+                    color: var(--vscode-button-secondaryForeground);
                 }
 
                 .node-content {
@@ -321,22 +480,24 @@ export class MSCodeViewProvider implements vscode.WebviewViewProvider {
                     position: absolute;
                     right: 8px;
                     top: 8px;
-                    background: var(--vscode-editorError-foreground);
-                    color: white;
+                    background: transparent;
+                    color: var(--vscode-errorForeground);
                     border: none;
-                    width: 20px;
-                    height: 20px;
-                    border-radius: 50%;
+                    width: 24px;
+                    height: 24px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     cursor: pointer;
-                    font-size: 12px;
+                    font-size: 16px;
                     opacity: 0;
                     transition: opacity 0.2s;
+                    z-index: 2;
                 }
 
-                .checkpoint-node:hover .delete-btn {
+                .checkpoint-node .node-details .delete-btn {
+                    position: static;
+                    margin-left: auto;
                     opacity: 1;
                 }
 
@@ -345,258 +506,181 @@ export class MSCodeViewProvider implements vscode.WebviewViewProvider {
                     filter: brightness(1.2);
                 }
 
-                .view-diff-btn {
-                    background: var(--vscode-button-secondaryBackground);
-                    color: var(--vscode-button-secondaryForeground);
+                .view-diff-icon {
+                    background: transparent;
+                    color: var(--vscode-textLink-foreground);
                     border: none;
                     padding: 2px 6px;
                     border-radius: 2px;
                     cursor: pointer;
-                    font-size: 0.9em;
+                    font-size: 1em;
+                    margin-left: 8px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .view-diff-icon:hover {
+                    color: var(--vscode-textLink-activeForeground);
+                }
+                #diffView {
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 80%;
+                    height: 80%;
+                    background: var(--vscode-editor-background);
+                    border: 1px solid var(--vscode-widget-border);
+                    border-radius: 4px;
+                    z-index: 10;
+                    padding: 20px;
+                    overflow: auto;
+                    display: flex;
+                    flex-direction: column;
+                }
+                #diffTitle {
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                    display: flex;
+                    justify-content: space-between;
+                }
+                #closeDiffBtn {
+                    background: transparent;
+                    border: none;
+                    color: var(--vscode-foreground);
+                    cursor: pointer;
+                }
+                .diff-container {
+                    display: flex;
+                    height: 100%;
+                }
+                .diff-column {
+                    flex: 1;
+                    padding: 10px;
+                    overflow: auto;
+                    border: 1px solid var(--vscode-widget-border);
+                    margin: 0 5px;
+                }
+                .diff-header {
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                    padding: 5px;
+                    background: var(--vscode-editor-background);
+                    border-bottom: 1px solid var(--vscode-widget-border);
+                }
+                .added-line {
+                    background-color: rgba(0, 255, 0, 0.1);
+                }
+                .removed-line {
+                    background-color: rgba(255, 0, 0, 0.1);
+                    text-decoration: line-through;
+                }
+                .unchanged-line {
+                    color: var(--vscode-foreground);
+                }
+                #overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.5);
+                    z-index: 5;
+                }
+
+                .checkpoint-node .node-header {
+                    width: 100%;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 8px;
+                    user-select: none;
+                }
+
+                .checkpoint-node .node-time {
+                    flex: 1;
+                }
+
+                .checkpoint-node .node-header:hover {
+                    background-color: var(--vscode-list-hoverBackground);
+                    border-radius: 4px;
+                }
+
+                .checkpoint-node.collapsed {
+                    padding-bottom: 8px;
+                }
+
+                .checkpoint-node.collapsed .node-content {
+                    margin-bottom: 0;
+                }
+
+                .checkpoint-node .latest-badge {
+                    margin-right: 20px;
+                }
+
+                .node-header .expansion-indicator {
+                    font-size: 0.8em;
+                    color: var(--vscode-foreground);
+                    opacity: 0.7;
                     margin-left: 8px;
                 }
 
-                .view-diff-btn:hover {
-                    background: var(--vscode-button-secondaryHoverBackground);
+                .node-description {
+                    margin-top: 12px;
+                    margin-bottom: 8px;
+                    padding: 0 8px;
+                }
+
+                .node-header-container {
+                    padding: 8px;
+                    background-color: var(--vscode-editor-background);
+                    border-bottom: 1px solid var(--vscode-widget-border);
+                    margin-bottom: 10px;
+                }
+
+                .node-header-container .delete-btn {
+                    opacity: 1;
+                    color: var(--vscode-errorForeground);
+                    font-size: 18px;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    transition: background-color 0.2s;
+                }
+
+                .node-header-container .delete-btn:hover {
+                    background-color: var(--vscode-list-hoverBackground);
+                }
+
+                .confirmation-dialog {
+                    margin: 0;
+                    border-radius: 0;
+                    border-left: none;
+                    border-right: none;
+                    background-color: var(--vscode-notifications-background);
                 }
             </style>
         </head>
         <body>
             <div class="checkpoint-graph" id="checkpointGraph"></div>
             <div id="diffView" style="display: none;">
-                <div id="diffTitle"></div>
-                <div id="originalContent"></div>
-                <div id="modifiedContent"></div>
+                <div id="diffTitle">
+                    <span id="diffFileName"></span>
+                    <button id="closeDiffBtn">×</button>
+                </div>
+                <div class="diff-container">
+                    <div class="diff-column">
+                        <div class="diff-header">Original</div>
+                        <div id="originalContent"></div>
+                    </div>
+                    <div class="diff-column">
+                        <div class="diff-header">Modifié</div>
+                        <div id="modifiedContent"></div>
+                    </div>
+                </div>
             </div>
             <div id="overlay" style="display: none;"></div>
-            <script>
-                (function() {
-                    const vscode = acquireVsCodeApi();
-                    let checkpointData = [];
-                    let diffViewOpen = false;
-                    
-                    // Notifier que le webview est prêt
-                    vscode.postMessage({ command: 'ready' });
-                    
-                    // Si pas de réponse après 1 seconde, demander les checkpoints
-                    setTimeout(() => {
-                        vscode.postMessage({ command: 'getCheckpoints' });
-                    }, 1000);
-
-                    function createCheckpointNode(checkpoint, checkpointFile, isLatest) {
-                        console.log('Creating node for checkpoint:', checkpoint.id);
-                        const node = document.createElement('div');
-                        node.className = 'checkpoint-node';
-                        
-                        const dot = document.createElement('div');
-                        dot.className = 'node-dot';
-                        
-                        const content = document.createElement('div');
-                        content.className = 'node-content';
-                        
-                        const header = document.createElement('div');
-                        header.style.display = 'flex';
-                        header.style.alignItems = 'center';
-                        
-                        const time = document.createElement('span');
-                        time.className = 'node-time';
-                        time.textContent = new Date(checkpoint.timestamp).toLocaleString();
-                        header.appendChild(time);
-                        
-                        if (isLatest) {
-                            const badge = document.createElement('span');
-                            badge.className = 'latest-badge';
-                            badge.textContent = 'Latest';
-                            header.appendChild(badge);
-                        }
-                        
-                        const deleteBtn = document.createElement('button');
-                        deleteBtn.className = 'delete-btn';
-                        deleteBtn.textContent = '×';
-                        deleteBtn.title = 'Delete this checkpoint';
-                        deleteBtn.onclick = (e) => {
-                            e.stopPropagation();
-                            if (confirm('Are you sure you want to delete this checkpoint?')) {
-                                vscode.postMessage({
-                                    command: 'deleteCheckpoint',
-                                    checkpointId: checkpoint.id
-                                });
-                            }
-                        };
-                        node.appendChild(deleteBtn);
-                        
-                        const description = document.createElement('div');
-                        description.className = 'node-description';
-                        description.textContent = checkpoint.metadata.description;
-                        
-                        const files = document.createElement('div');
-                        files.className = 'file-changes';
-                        const fileCount = Object.keys(checkpoint.files).length;
-                        const filesList = document.createElement('div');
-                        filesList.style.marginTop = '4px';
-
-                        Object.keys(checkpoint.files).forEach(filePath => {
-                            const fileItem = document.createElement('div');
-                            fileItem.className = 'file-item';
-                            fileItem.textContent = filePath;
-                            
-                            const viewDiffBtn = document.createElement('button');
-                            viewDiffBtn.className = 'view-diff-btn';
-                            viewDiffBtn.textContent = 'Voir diff';
-                            viewDiffBtn.onclick = (e) => {
-                                e.stopPropagation();
-                                vscode.postMessage({
-                                    command: 'showDiff',
-                                    checkpointId: checkpoint.id,
-                                    filePath: filePath
-                                });
-                            };
-                            
-                            fileItem.appendChild(viewDiffBtn);
-                            filesList.appendChild(fileItem);
-                        });
-
-                        files.textContent = \`\${fileCount} file\${fileCount !== 1 ? 's' : ''} modified\`;
-                        files.appendChild(filesList);
-                        
-                        if (checkpointFile) {
-                            const pathInfo = document.createElement('div');
-                            pathInfo.style.fontSize = '0.8em';
-                            pathInfo.style.color = 'var(--vscode-descriptionForeground)';
-                            pathInfo.textContent = \`Path: .mscode/changes/\${checkpointFile.id}\`;
-                            files.appendChild(pathInfo);
-                        }
-                        
-                        const restoreBtn = document.createElement('button');
-                        restoreBtn.className = 'restore-btn';
-                        restoreBtn.textContent = 'Restore this version';
-                        restoreBtn.onclick = () => {
-                            vscode.postMessage({
-                                command: 'restoreCheckpoint',
-                                checkpointId: checkpoint.id
-                            });
-                        };
-                        
-                        content.appendChild(header);
-                        content.appendChild(description);
-                        content.appendChild(files);
-                        content.appendChild(restoreBtn);
-                        
-                        node.appendChild(dot);
-                        node.appendChild(content);
-                        
-                        return node;
-                    }
-
-                    function showDiffView(original, modified, fileName) {
-                        if (diffViewOpen) return;
-                        
-                        if (confirm("Would you like to see changes for " + fileName + "?")) {
-                            diffViewOpen = true;
-                            document.getElementById('diffTitle').textContent = 'Differences - ' + fileName;
-                            document.getElementById('originalContent').innerHTML = highlightDiff(original, modified);
-                            document.getElementById('modifiedContent').innerHTML = highlightDiff(modified, original);
-                            document.getElementById('overlay').style.display = 'block';
-                            document.getElementById('diffView').style.display = 'block';
-                        }
-                    }
-
-                    function closeDiffView() {
-                        diffViewOpen = false;
-                        document.getElementById('overlay').style.display = 'none';
-                        document.getElementById('diffView').style.display = 'none';
-                    }
-
-                    function highlightDiff(text1, text2) {
-                        // Simple implementation - can be enhanced later
-                        return text1;
-                    }
-
-                    window.addEventListener('message', event => {
-                        const message = event.data;
-                        console.log('Message received:', message.command);
-                        
-                        switch (message.command) {
-                            case 'updateCheckpoints':
-                                console.log('Updating checkpoints:', message.checkpoints.length);
-                                const graph = document.getElementById('checkpointGraph');
-                                graph.innerHTML = '';
-                                
-                                if (message.checkpoints && message.checkpoints.length > 0) {
-                                    checkpointData = message.checkpoints;
-                                    const checkpoints = message.checkpoints.sort((a, b) => b.timestamp - a.timestamp);
-                                    const checkpointFiles = new Map(
-                                        message.checkpointFiles.map(cf => [cf.id, cf])
-                                    );
-                                    
-                                    console.log('Creating checkpoint nodes...');
-                                    checkpoints.forEach((checkpoint, index) => {
-                                        const checkpointFile = checkpointFiles.get(checkpoint.id);
-                                        const node = createCheckpointNode(checkpoint, checkpointFile, index === 0);
-                                        graph.appendChild(node);
-                                    });
-                                    console.log('Checkpoint nodes created');
-                                } else {
-                                    console.log('No checkpoints to display');
-                                    graph.innerHTML = '<div style="padding: 20px;">Aucun checkpoint disponible</div>';
-                                }
-                                break;
-
-                            case 'displayDiff':
-                                if (message.diff) {
-                                    showDiffView(message.diff.original, message.diff.modified, message.filePath);
-                                }
-                                break;
-                        }
-                    });
-
-                    // Add escape key handler
-                    document.addEventListener('keydown', (e) => {
-                        if (e.key === 'Escape') {
-                            closeDiffView();
-                        }
-                    });
-
-                    // Add overlay click handler
-                    document.getElementById('overlay').addEventListener('click', closeDiffView);
-                })();
-            </script>
+            <script src="${scriptUri}"></script>
         </body>
         </html>`;
-    }
-
-    private async restoreCheckpoint(checkpointId: string) {
-        const checkpoint = await this.checkpointManager.getCheckpointDetails(checkpointId);
-        if (!checkpoint) return;
-
-        // Restaurer chaque fichier du checkpoint
-        for (const [filePath, fileData] of Object.entries(checkpoint.files)) {
-            await this.checkpointManager.revertToState(filePath, checkpoint.timestamp);
-        }
-
-        vscode.window.showInformationMessage(`Restored to checkpoint: ${checkpoint.metadata.description}`);
-    }
-
-    private async deleteCheckpoint(checkpointId: string) {
-        const checkpoint = await this.checkpointManager.getCheckpointDetails(checkpointId);
-        if (!checkpoint) return;
-
-        try {
-            // Supprimer le dossier du checkpoint
-            const checkpointDir = path.join(this._extensionUri.fsPath, '..', '.mscode', 'changes', checkpointId);
-            if (fsExtra.existsSync(checkpointDir)) {
-                fsExtra.removeSync(checkpointDir);
-            }
-
-            // Mettre à jour l'historique en retirant le checkpoint
-            let history = await this.checkpointManager.getAllCheckpoints();
-            history = history.filter((cp: CheckpointHistory) => cp.id !== checkpointId);
-            const historyFile = path.join(this._extensionUri.fsPath, '..', '.mscode', 'history.json');
-            fsExtra.writeJSONSync(historyFile, history, { spaces: 2 });
-
-            vscode.window.showInformationMessage(`Checkpoint deleted: ${checkpoint.metadata.description}`);
-        } catch (error) {
-            vscode.window.showErrorMessage(`Error deleting checkpoint: ${error}`);
-        }
     }
 }

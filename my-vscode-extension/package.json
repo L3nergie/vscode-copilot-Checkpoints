@@ -1,14 +1,15 @@
 {
-  "name": "mscode",
+  "name": "my-vscode-extension",
   "displayName": "MSCode Extension",
   "description": "Une extension de base pour Visual Studio Code.",
   "version": "0.0.1",
-  "publisher": "Murray",
+  "publisher": "votre_nom",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -17,6 +18,13 @@
           "id": "mscode-sidebar",
           "title": "MSCode",
           "icon": "media/icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "mscode-ai-panel",
+          "title": "MSCode AI",
+          "icon": "media/panel-icon.svg"
         }
       ]
     },
@@ -29,15 +37,87 @@
           "icon": "media/panel-icon.svg",
           "visibility": "visible",
           "retain": true
-        },
+        }
+      ],
+      "mscode-ai-panel": [
         {
           "type": "webview",
           "id": "deepseekView",
-          "name": "DeepSeek Chat",
-          "icon": "media/panel-icon.svg",
-          "contextualTitle": "DeepSeek Chat"
+          "name": "DeepSeek",
+          "icon": "media/deepseek-icon.svg",
+          "visibility": "visible"
+        },
+        {
+          "type": "webview",
+          "id": "mistralView",
+          "name": "Mistral AI",
+          "icon": "media/mistral-icon.svg",
+          "visibility": "visible"
+        },
+        {
+          "type": "webview",
+          "id": "geminiView",
+          "name": "Gemini",
+          "icon": "media/gemini-icon.svg",
+          "visibility": "visible"
+        },
+        {
+          "type": "webview",
+          "id": "groqView",
+          "name": "Groq",
+          "icon": "media/groq-icon.svg",
+          "visibility": "visible"
+        },
+        {
+          "type": "webview",
+          "id": "claudeView",
+          "name": "Claude",
+          "icon": "media/claude-icon.svg",
+          "visibility": "visible"
+        },
+        {
+          "type": "webview",
+          "id": "openaiView",
+          "name": "OpenAI",
+          "icon": "media/openai-icon.svg",
+          "visibility": "visible"
         }
       ]
+    },
+    "configuration": {
+      "title": "MSCode",
+      "properties": {
+        "deepseek.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour DeepSeek"
+        },
+        "mistral.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Mistral AI"
+        },
+        "gemini.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Google Gemini"
+        },
+        "groq.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Groq"
+        },
+        "claude.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Claude (Anthropic)"
+        },
+        "openai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour OpenAI"
+        }
+      }
     },
     "commands": [
       {
@@ -48,11 +128,6 @@
       {
         "command": "mscode.reload",
         "title": "MSCode: Recharger l'extension"
-      },
-      {
-        "command": "mscode.configureDeepSeek",
-        "title": "Configurer l'API DeepSeek",
-        "category": "MSCode"
       }
     ],
     "keybindings": [
@@ -61,32 +136,7 @@
         "key": "ctrl+alt+r",
         "mac": "cmd+alt+r"
       }
-    ],
-    "configuration": {
-      "title": "MSCode",
-      "properties": {
-        "deepseek.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Clé API pour DeepSeek",
-          "scope": "application"
-        },
-        "deepseek.apiUrl": {
-          "type": "string",
-          "default": "https://api.deepseek.com/v1/chat/completions",
-          "description": "URL de l'API DeepSeek (par défaut: https://api.deepseek.com/v1/chat/completions)"
-        }
-      }
-    },
-    "menus": {
-      "view/title": [
-        {
-          "command": "mscode.configureDeepSeek",
-          "when": "view == deepseekView",
-          "group": "navigation"
-        }
-      ]
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -95,14 +145,17 @@
     "pretest": "npm run compile"
   },
   "dependencies": {
-    "@vscode/codicons": "^0.0.35",
-    "fs-extra": "^11.1.1"
+    "@types/minimatch": "^5.1.2",
+    "fs-extra": "^11.1.1",
+    "minimatch": "^10.0.1",
+    "shelljs": "^0.8.5"
   },
   "devDependencies": {
+    "@types/diff": "^5.0.0",
     "@types/fs-extra": "^11.0.1",
     "@types/node": "^20.0.0",
+    "@types/shelljs": "^0.8.12",
     "@types/vscode": "^1.85.0",
-    "@types/diff": "^5.0.0",
     "diff": "^5.0.0",
     "typescript": "^5.3.0"
   }
