@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
+import * as fsExtra from 'fs-extra';
 
 export interface LineHistory {
     lineNumber: number;
@@ -75,14 +75,30 @@ export class CheckpointManager {
         changes: FileChangeLog[],
         miniMap: MiniMapData
     }> = new Map();
-    fileTimelines: any;
-    activeMiniMaps: any;
+    private fileTimelines: Map<string, FileTimeline> = new Map();
+    private activeMiniMaps: Map<string, MiniMapData> = new Map();
 
-    constructor(private workspaceRoot: string) {
+    constructor(
+        private workspaceRoot: string,
+        private readonly outputChannel: vscode.OutputChannel
+    ) {
+        this.outputChannel.appendLine(`=== Initialisation du CheckpointManager ===`);
+        this.outputChannel.appendLine(`Workspace: ${workspaceRoot}`);
+        
         this.historyFile = path.join(workspaceRoot, '.mscode', 'history.json');
         this.checkpointsDir = path.join(workspaceRoot, '.mscode', 'changes');
         this.timelineDir = path.join(workspaceRoot, '.mscode', 'timelines');
+        
+        this.outputChannel.appendLine(`Fichier historique: ${this.historyFile}`);
+        this.outputChannel.appendLine(`Dossier checkpoints: ${this.checkpointsDir}`);
+        this.outputChannel.appendLine(`Dossier timelines: ${this.timelineDir}`);
+        
         this.ensureDirectories();
+        this.loadExistingTimelines();
+        
+        // Charger l'historique au démarrage
+        const history = this.loadHistory();
+        this.outputChannel.appendLine(`${history.length} checkpoints chargés\n`);
     }
 
     private ensureDirectories() {
@@ -93,21 +109,24 @@ export class CheckpointManager {
         ];
         
         for (const dir of dirs) {
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
+            if (!fsExtra.existsSync(dir)) {
+                this.outputChannel.appendLine(`Création du dossier: ${dir}`);
+                fsExtra.mkdirpSync(dir);
+            } else {
+                this.outputChannel.appendLine(`Dossier existant: ${dir}`);
             }
         }
     }
 
     private loadExistingTimelines() {
-        if (fs.existsSync(this.timelineDir)) {
-            const files = fs.readdirSync(this.timelineDir);
+        if (fsExtra.existsSync(this.timelineDir)) {
+            const files = fsExtra.readdirSync(this.timelineDir);
             for (const file of files) {
                 if (file.endsWith('.timeline.json')) {
                     const filePath = file.replace('.timeline.json', '');
                     const timelinePath = path.join(this.timelineDir, file);
                     try {
-                        const timeline = JSON.parse(fs.readFileSync(timelinePath, 'utf-8'));
+                        const timeline = JSON.parse(fsExtra.readFileSync(timelinePath, 'utf-8'));
                         this.fileTimelines.set(filePath, timeline);
                     } catch (error) {
                         console.error(`Erreur lors du chargement de la timeline ${file}:`, error);
@@ -124,7 +143,7 @@ export class CheckpointManager {
 
     private async saveTimeline(filePath: string, timeline: FileTimeline) {
         const timelineFile = this.getTimelineFilePath(filePath);
-        fs.writeFileSync(timelineFile, JSON.stringify(timeline, null, 2));
+        fsExtra.writeFileSync(timelineFile, JSON.stringify(timeline, null, 2));
         this.fileTimelines.set(filePath, timeline);
     }
 
@@ -133,8 +152,8 @@ export class CheckpointManager {
         const sanitizedPath = filePath.replace(/[/\\]/g, '_');
         const snapshotDir = path.join(this.timelineDir, sanitizedPath);
         
-        if (!fs.existsSync(snapshotDir)) {
-            fs.mkdirSync(snapshotDir, { recursive: true });
+        if (!fsExtra.existsSync(snapshotDir)) {
+            fsExtra.mkdirpSync(snapshotDir);
         }
 
         // Inclure la mini-map dans le snapshot
@@ -148,69 +167,46 @@ export class CheckpointManager {
             miniMap: miniMap ? {...miniMap, endTime: timestamp} : null
         };
 
-        fs.writeFileSync(snapshotFile, JSON.stringify(snapshot, null, 2));
+        fsExtra.writeFileSync(snapshotFile, JSON.stringify(snapshot, null, 2));
     }
 
     private async cleanupTimestampFiles(filePath: string) {
         const sanitizedPath = filePath.replace(/[/\\]/g, '_');
         const snapshotDir = path.join(this.timelineDir, sanitizedPath);
         
-        if (!fs.existsSync(snapshotDir)) return;
+        if (!fsExtra.existsSync(snapshotDir)) return;
 
         const ONE_HOUR = 3600000;
         const now = Date.now();
         
-        // Organiser les snapshots par heure
-        const files = fs.readdirSync(snapshotDir)
-            .filter(file => file.endsWith('.json'))
-            .map(file => ({
-                name: file,
-                timestamp: parseInt(file.replace('.json', '')),
-                path: path.join(snapshotDir, file)
-            }))
-            .sort((a, b) => a.timestamp - b.timestamp);
+        try {
+            const files = fsExtra.readdirSync(snapshotDir)
+                .filter(file => file.endsWith('.json'))
+                .map(file => ({
+                    name: file,
+                    timestamp: parseInt(file.replace('.json', '')),
+                    path: path.join(snapshotDir, file)
+                }))
+                .sort((a, b) => a.timestamp - b.timestamp);
 
-        // Grouper les fichiers par heure
-        const hourlyGroups = new Map<number, typeof files>();
-        
-        for (const file of files) {
-            const hourTimestamp = Math.floor(file.timestamp / ONE_HOUR) * ONE_HOUR;
-            if (!hourlyGroups.has(hourTimestamp)) {
-                hourlyGroups.set(hourTimestamp, []);
-            }
-            hourlyGroups.get(hourTimestamp)!.push(file);
-        }
-
-        // Pour chaque groupe horaire (sauf l'heure en cours)
-        for (const [hourTimestamp, hourFiles] of hourlyGroups) {
-            if (now - hourTimestamp > ONE_HOUR) {
-                // Garder le premier et dernier changement de l'heure
-                const toKeep = new Set([hourFiles[0], hourFiles[hourFiles.length - 1]]);
-                
-                // Garder un snapshot toutes les 5 minutes
-                const FIVE_MINUTES = 300000;
-                for (let i = 1; i < hourFiles.length - 1; i++) {
-                    const file = hourFiles[i];
-                    if ((file.timestamp - hourTimestamp) % FIVE_MINUTES === 0) {
-                        toKeep.add(file);
+            // Ne garder que les 100 derniers fichiers si on en a plus
+            if (files.length > 100) {
+                const filesToRemove = files.slice(0, files.length - 100);
+                filesToRemove.forEach(file => {
+                    try {
+                        fsExtra.unlinkSync(file.path);
+                        this.outputChannel.appendLine(`Nettoyage: suppression de ${file.path}`);
+                    } catch (error) {
+                        this.outputChannel.appendLine(`Erreur lors de la suppression de ${file.path}: ${error}`);
                     }
-                }
-
-                // Supprimer les fichiers non conservés
-                for (const file of hourFiles) {
-                    if (!toKeep.has(file)) {
-                        try {
-                            fs.unlinkSync(file.path);
-                        } catch (error) {
-                            console.error(`Erreur lors de la suppression du fichier ${file.path}:`, error);
-                        }
-                    }
-                }
+                });
             }
+        } catch (error) {
+            this.outputChannel.appendLine(`Erreur lors du nettoyage des fichiers timeline: ${error}`);
         }
     }
 
-    private async saveModificationBatch(filePath: string, force: boolean = false) {
+    private async saveModificationBatch(filePath: string, force: boolean = false): Promise<void> {
         const activeModification = this.activeModifications.get(filePath);
         if (!activeModification) return;
 
@@ -221,57 +217,77 @@ export class CheckpointManager {
             const timelineFile = this.getTimelineFilePath(filePath);
             const timelineDir = path.dirname(timelineFile);
             
-            if (!fs.existsSync(timelineDir)) {
-                fs.mkdirSync(timelineDir, { recursive: true });
+            try {
+                if (!fsExtra.existsSync(timelineDir)) {
+                    fsExtra.mkdirpSync(timelineDir);
+                }
+
+                let timeline: FileTimeline;
+                if (fsExtra.existsSync(timelineFile)) {
+                    timeline = JSON.parse(fsExtra.readFileSync(timelineFile, 'utf-8'));
+                    // Éviter la duplication des changements
+                    const lastSnapshot = timeline.snapshots[timeline.snapshots.length - 1];
+                    if (lastSnapshot && lastSnapshot.timestamp === now) {
+                        this.outputChannel.appendLine(`Ignorer la sauvegarde en double pour ${filePath}`);
+                        return;
+                    }
+                } else {
+                    timeline = {
+                        filePath,
+                        changes: [],
+                        snapshots: []
+                    };
+                }
+
+                // Limiter le nombre de snapshots à 100 maximum
+                if (timeline.snapshots.length >= 100) {
+                    timeline.snapshots = timeline.snapshots.slice(-99);
+                }
+
+                const content = fsExtra.readFileSync(path.join(this.workspaceRoot, filePath), 'utf-8');
+                
+                // Ne sauvegarder que si le contenu a changé
+                const lastContent = timeline.snapshots[timeline.snapshots.length - 1]?.content;
+                if (content !== lastContent) {
+                    timeline.snapshots.push({
+                        timestamp: now,
+                        content
+                    });
+
+                    fsExtra.writeFileSync(timelineFile, JSON.stringify(timeline, null, 2));
+                    this.outputChannel.appendLine(`Timeline sauvegardée pour ${filePath} (${timeline.snapshots.length} snapshots)`);
+                } else {
+                    this.outputChannel.appendLine(`Pas de changement de contenu pour ${filePath}`);
+                }
+            } catch (error) {
+                this.outputChannel.appendLine(`Erreur lors de la sauvegarde: ${error}`);
+            } finally {
+                this.activeModifications.delete(filePath);
             }
-
-            let timeline: FileTimeline;
-            if (fs.existsSync(timelineFile)) {
-                timeline = JSON.parse(fs.readFileSync(timelineFile, 'utf-8'));
-            } else {
-                timeline = {
-                    filePath,
-                    changes: [],
-                    snapshots: []
-                };
-            }
-
-            activeModification.changes.forEach(change => {
-                timeline.changes.push(...change.lineHistory);
-            });
-
-            // Lire le contenu synchrone pour éviter les problèmes de Promise
-            const content = fs.readFileSync(path.join(this.workspaceRoot, filePath), 'utf-8');
-            timeline.snapshots.push({
-                timestamp: now,
-                content
-            });
-
-            fs.writeFileSync(timelineFile, JSON.stringify(timeline, null, 2));
-            this.activeModifications.delete(filePath);
         }
     }
 
-    async logChange(filePath: string, change: FileChangeLog) {
+    async logChange(filePath: string, change: FileChangeLog): Promise<void> {
+        this.outputChannel.appendLine(`\n=== Changement détecté dans ${filePath} ===`);
+        this.outputChannel.appendLine(`Type: ${change.type}`);
+        this.outputChannel.appendLine(`Ligne: ${change.lineNumber}`);
+        this.outputChannel.appendLine(`Contenu: ${change.content.substring(0, 50)}${change.content.length > 50 ? '...' : ''}`);
+        
         if (!this.activeModifications.has(filePath)) {
+            this.outputChannel.appendLine('Première modification pour ce fichier, initialisation...');
             this.activeModifications.set(filePath, {
                 startTime: Date.now(),
                 changes: [],
-                miniMap: {
-                    points: [],
-                    startTime: Date.now(),
-                    endTime: 0,
-                    filePath,
-                    dimensions: { width: 100, height: 100 }
-                }
+                miniMap: this.initializeMiniMap(filePath)
             });
         }
 
         const modification = this.activeModifications.get(filePath)!;
         modification.changes.push(change);
 
-        // Charger le contenu de manière synchrone
-        const content = fs.readFileSync(path.join(this.workspaceRoot, filePath), 'utf-8');
+        this.outputChannel.appendLine(`Nombre total de changements: ${modification.changes.length}`);
+        
+        const content = fsExtra.readFileSync(path.join(this.workspaceRoot, filePath), 'utf-8');
         
         const miniMapPoint: MiniMapPoint = {
             ...this.calculateMiniMapPoint(change, content),
@@ -279,17 +295,29 @@ export class CheckpointManager {
         };
         
         modification.miniMap.points.push(miniMapPoint);
+        this.outputChannel.appendLine(`Point ajouté à la minimap: (${miniMapPoint.x}, ${miniMapPoint.y})`);
+
+        await this.saveModificationBatch(filePath, false);
     }
 
     async createCheckpoint(
         fileChanges: Array<{ path: string; changes: FileChangeLog[] }>,
         isAutomatic: boolean,
         description?: string
-    ) {
+    ): Promise<CheckpointLog> {
+        this.outputChannel.appendLine('\n=== Création d\'un nouveau checkpoint ===');
+        this.outputChannel.appendLine(`Type: ${isAutomatic ? 'Automatique' : 'Manuel'}`);
+        if (description) {
+            this.outputChannel.appendLine(`Description: ${description}`);
+        }
+
         const timestamp = Date.now();
         const checkpointId = `checkpoint_${timestamp}`;
+        this.outputChannel.appendLine(`ID: ${checkpointId}`);
+        
         const checkpointDir = path.join(this.checkpointsDir, checkpointId);
-        fs.mkdirSync(checkpointDir, { recursive: true });
+        await fsExtra.mkdirp(checkpointDir);
+        this.outputChannel.appendLine(`Dossier créé: ${checkpointDir}`);
 
         const checkpoint: CheckpointLog = {
             id: checkpointId,
@@ -301,10 +329,11 @@ export class CheckpointManager {
             }
         };
 
-        // Traiter les fichiers actifs uniquement
+        this.outputChannel.appendLine('\nFichiers modifiés:');
         for (const [filePath, modification] of this.activeModifications.entries()) {
             if (modification.changes.length === 0) continue;
 
+            this.outputChannel.appendLine(`- ${filePath} (${modification.changes.length} changements)`);
             const currentContent = await this.getCurrentFileContent(filePath);
             modification.miniMap.endTime = timestamp;
 
@@ -323,47 +352,39 @@ export class CheckpointManager {
             };
         }
 
-        // Sauvegarder le checkpoint dans un seul fichier
-        fs.writeFileSync(
-            path.join(checkpointDir, 'checkpoint.json'),
+        const checkpointPath = path.join(checkpointDir, 'checkpoint.json');
+        await fsExtra.writeFile(
+            checkpointPath,
             JSON.stringify(checkpoint, null, 2)
         );
+        this.outputChannel.appendLine(`\nCheckpoint sauvegardé: ${checkpointPath}`);
 
-        // Réinitialiser les modifications actives
+        this.outputChannel.appendLine('Réinitialisation des modifications actives');
         this.activeModifications.clear();
 
-        // Gérer l'historique
         await this.manageHistory(checkpoint);
+        this.outputChannel.appendLine('Historique mis à jour\n');
 
         return checkpoint;
     }
 
     private async manageHistory(newCheckpoint: CheckpointLog) {
-        const historyFile = path.join(this.workspaceRoot, '.mscode', 'history.json');
-        let history: CheckpointLog[] = [];
+        const history = this.loadHistory();
+        history.push(newCheckpoint);
 
-        try {
-            if (fs.existsSync(historyFile)) {
-                history = JSON.parse(fs.readFileSync(historyFile, 'utf-8'));
-            }
-
-            // Garder seulement les 20 derniers checkpoints
-            history.push(newCheckpoint);
-            if (history.length > 20) {
-                const removed = history.splice(0, history.length - 20);
-                // Nettoyer les anciens checkpoints
-                for (const checkpoint of removed) {
-                    const dir = path.join(this.checkpointsDir, checkpoint.id);
-                    if (fs.existsSync(dir)) {
-                        fs.rmSync(dir, { recursive: true });
-                    }
+        // Garder seulement les 20 derniers checkpoints
+        if (history.length > 20) {
+            const removed = history.splice(0, history.length - 20);
+            // Nettoyer les anciens checkpoints
+            for (const checkpoint of removed) {
+                const dir = path.join(this.checkpointsDir, checkpoint.id);
+                if (fsExtra.existsSync(dir)) {
+                    fsExtra.removeSync(dir);
                 }
             }
-
-            fs.writeFileSync(historyFile, JSON.stringify(history, null, 2));
-        } catch (error) {
-            console.error('Erreur lors de la gestion de l\'historique:', error);
         }
+
+        this.saveHistory(history);
     }
 
     async revertToState(filePath: string, timestamp: number): Promise<boolean> {
@@ -374,8 +395,8 @@ export class CheckpointManager {
         const sanitizedPath = filePath.replace(/[/\\]/g, '_');
         const snapshotDir = path.join(this.timelineDir, sanitizedPath);
         
-        if (fs.existsSync(snapshotDir)) {
-            const snapshots = fs.readdirSync(snapshotDir)
+        if (fsExtra.existsSync(snapshotDir)) {
+            const snapshots = fsExtra.readdirSync(snapshotDir)
                 .filter(file => file.endsWith('.json'))
                 .map(file => ({
                     timestamp: parseInt(file.replace('.json', '')),
@@ -387,13 +408,13 @@ export class CheckpointManager {
             // Appliquer les changements dans l'ordre chronologique
             let content = '';
             for (const snapshot of snapshots) {
-                const snapshotData = JSON.parse(fs.readFileSync(snapshot.path, 'utf-8'));
+                const snapshotData = JSON.parse(fsExtra.readFileSync(snapshot.path, 'utf-8'));
                 content = snapshotData.fullContent;
             }
 
             if (content) {
                 const fullPath = path.join(this.workspaceRoot, filePath);
-                fs.writeFileSync(fullPath, content);
+                fsExtra.writeFileSync(fullPath, content);
                 return true;
             }
         }
@@ -427,45 +448,97 @@ export class CheckpointManager {
     private async getCurrentFileContent(filePath: string): Promise<string> {
         try {
             const fullPath = path.join(this.workspaceRoot, filePath);
-            return fs.readFileSync(fullPath, 'utf-8');
+            return fsExtra.readFileSync(fullPath, 'utf-8');
         } catch (error) {
-            console.error(`Erreur lors de la lecture du fichier ${filePath}:`, error);
+            this.outputChannel.appendLine(`Erreur lors de la lecture du fichier ${filePath}: ${error}`);
             return '';
         }
     }
 
     private loadHistory(): CheckpointLog[] {
+        this.outputChannel.appendLine('Chargement de l\'historique...');
         try {
-            const content = fs.readFileSync(this.historyFile, 'utf-8');
-            return JSON.parse(content);
+            // Si le fichier history n'existe pas encore, chercher directement dans le dossier changes
+            if (!fsExtra.existsSync(this.historyFile)) {
+                this.outputChannel.appendLine('Fichier history.json non trouvé, lecture directe des checkpoints...');
+                const checkpoints: CheckpointLog[] = [];
+                if (fsExtra.existsSync(this.checkpointsDir)) {
+                    const dirs = fsExtra.readdirSync(this.checkpointsDir)
+                        .filter(dir => fsExtra.statSync(path.join(this.checkpointsDir, dir)).isDirectory());
+                    
+                    this.outputChannel.appendLine(`${dirs.length} dossiers de checkpoints trouvés`);
+                    
+                    for (const dir of dirs) {
+                        const checkpointPath = path.join(this.checkpointsDir, dir, 'checkpoint.json');
+                        this.outputChannel.appendLine(`Lecture du checkpoint: ${checkpointPath}`);
+                        if (fsExtra.existsSync(checkpointPath)) {
+                            try {
+                                const checkpoint = JSON.parse(fsExtra.readFileSync(checkpointPath, 'utf-8'));
+                                checkpoints.push(checkpoint);
+                                this.outputChannel.appendLine(`Checkpoint ${dir} chargé avec succès`);
+                            } catch (error) {
+                                this.outputChannel.appendLine(`ERREUR lors de la lecture du checkpoint ${dir}: ${error}`);
+                            }
+                        }
+                    }
+                    // Sauvegarder l'historique pour la prochaine fois
+                    this.saveHistory(checkpoints);
+                    this.outputChannel.appendLine(`${checkpoints.length} checkpoints sauvegardés dans history.json`);
+                }
+                return checkpoints;
+            }
+            
+            // Lecture normale du fichier history.json
+            this.outputChannel.appendLine('Lecture du fichier history.json');
+            const content = fsExtra.readFileSync(this.historyFile, 'utf-8');
+            const history = JSON.parse(content);
+            this.outputChannel.appendLine(`${history.length} checkpoints chargés depuis history.json`);
+            return history;
         } catch (error) {
-            console.error('Erreur lors du chargement de l\'historique:', error);
+            this.outputChannel.appendLine(`ERREUR lors du chargement de l'historique: ${error}`);
             return [];
         }
     }
 
-    private saveHistory(history: CheckpointLog[]) {
+    private saveHistory(history: CheckpointLog[]): void {
         try {
-            fs.writeFileSync(this.historyFile, JSON.stringify(history, null, 2));
+            fsExtra.writeFileSync(this.historyFile, JSON.stringify(history, null, 2));
         } catch (error) {
-            console.error('Erreur lors de la sauvegarde de l\'historique:', error);
+            this.outputChannel.appendLine(`Erreur lors de la sauvegarde de l'historique: ${error}`);
         }
     }
 
     async getCheckpointDetails(checkpointId: string): Promise<CheckpointLog | null> {
         const history = this.loadHistory();
-        return history.find(cp => cp.id === checkpointId) || null;
+        return history.find((cp: CheckpointLog) => cp.id === checkpointId) || null;
     }
 
     async getAllCheckpoints(): Promise<CheckpointLog[]> {
-        return this.loadHistory();
+        this.outputChannel.appendLine('getAllCheckpoints() appele...');
+        const checkpoints = this.loadHistory();
+        this.outputChannel.appendLine(`getAllCheckpoints() retourne ${checkpoints.length} checkpoints`);
+        
+        if (checkpoints.length === 0) {
+            const changesDir = path.join(this.workspaceRoot, '.mscode', 'changes');
+            if (fsExtra.existsSync(changesDir)) {
+                const dirs = fsExtra.readdirSync(changesDir);
+                this.outputChannel.appendLine(`Dossier changes contient ${dirs.length} entrees`);
+                dirs.forEach(dir => {
+                    this.outputChannel.appendLine(`- ${dir}`);
+                });
+            } else {
+                this.outputChannel.appendLine('Dossier changes non trouve');
+            }
+        }
+        
+        return checkpoints;
     }
 
     async getFileHistory(filePath: string): Promise<Array<{ checkpoint: CheckpointLog; changes: FileChangeLog[] }>> {
         const history = this.loadHistory();
         return history
-            .filter(cp => cp.files[filePath])
-            .map(cp => ({
+            .filter((cp: CheckpointLog) => cp.files[filePath])
+            .map((cp: CheckpointLog) => ({
                 checkpoint: cp,
                 changes: cp.files[filePath].changes
             }));
@@ -475,18 +548,18 @@ export class CheckpointManager {
         const sanitizedPath = filePath.replace(/[/\\]/g, '_');
         const snapshotDir = path.join(this.timelineDir, sanitizedPath);
         
-        if (!fs.existsSync(snapshotDir)) {
+        if (!fsExtra.existsSync(snapshotDir)) {
             return null;
         }
 
-        const snapshots = fs.readdirSync(snapshotDir)
+        const snapshots = fsExtra.readdirSync(snapshotDir)
             .filter(file => file.endsWith('.json'))
             .map(file => {
                 const timestamp = parseInt(file.replace('.json', ''));
                 return {
                     timestamp,
                     path: path.join(snapshotDir, file),
-                    data: JSON.parse(fs.readFileSync(path.join(snapshotDir, file), 'utf-8'))
+                    data: JSON.parse(fsExtra.readFileSync(path.join(snapshotDir, file), 'utf-8'))
                 };
             })
             .filter(snapshot => snapshot.timestamp >= fromTimestamp && snapshot.timestamp <= toTimestamp)
@@ -508,35 +581,35 @@ export class CheckpointManager {
         timestamps: number[];
         changes: Map<number, LineHistory[]>;
         snapshots: Map<number, string>;
-    }> {
-        const sanitizedPath = filePath.replace(/[/\\]/g, '_');
-        const snapshotDir = path.join(this.timelineDir, sanitizedPath);
-        
-        const timestamps: number[] = [];
-        const changes = new Map<number, LineHistory[]>();
-        const snapshots = new Map<number, string>();
+    }> { 
+            const sanitizedPath = filePath.replace(/[/\\]/g, '_');
+            const snapshotDir = path.join(this.timelineDir, sanitizedPath);
+            
+            const timestamps: number[] = [];
+            const changes = new Map<number, LineHistory[]>();
+            const snapshots = new Map<number, string>();
 
-        if (fs.existsSync(snapshotDir)) {
-            const files = fs.readdirSync(snapshotDir)
-                .filter(file => file.endsWith('.json'))
-                .sort((a, b) => {
-                    const timeA = parseInt(a.replace('.json', ''));
-                    const timeB = parseInt(b.replace('.json', ''));
-                    return timeA - timeB;
-                });
+            if (fsExtra.existsSync(snapshotDir)) {
+                const files = fsExtra.readdirSync(snapshotDir)
+                    .filter(file => file.endsWith('.json'))
+                    .sort((a, b) => {
+                        const timeA = parseInt(a.replace('.json', ''));
+                        const timeB = parseInt(b.replace('.json', ''));
+                        return timeA - timeB;
+                    });
 
-            for (const file of files) {
-                const timestamp = parseInt(file.replace('.json', ''));
-                const data = JSON.parse(fs.readFileSync(path.join(snapshotDir, file), 'utf-8'));
-                
-                timestamps.push(timestamp);
-                changes.set(timestamp, data.lineHistory);
-                snapshots.set(timestamp, data.fullContent);
+                for (const file of files) {
+                    const timestamp = parseInt(file.replace('.json', ''));
+                    const data = JSON.parse(fsExtra.readFileSync(path.join(snapshotDir, file), 'utf-8'));
+                    
+                    timestamps.push(timestamp);
+                    changes.set(timestamp, data.lineHistory);
+                    snapshots.set(timestamp, data.fullContent);
+                }
             }
-        }
 
-        return { timestamps, changes, snapshots };
-    }
+            return { timestamps, changes, snapshots };
+        }
 
     private initializeMiniMap(filePath: string): MiniMapData {
         return {
@@ -545,8 +618,8 @@ export class CheckpointManager {
             endTime: 0,
             filePath,
             dimensions: {
-                width: 100,  // Largeur de base de la mini-map
-                height: 100  // Hauteur de base de la mini-map
+                width: 100,
+                height: 100
             }
         };
     }
@@ -559,7 +632,7 @@ export class CheckpointManager {
         }
     }
 
-    private calculateMiniMapPoint(change: FileChangeLog, fileContent: string): MiniMapPoint {
+    private calculateMiniMapPoint(change: FileChangeLog, fileContent: string): Omit<MiniMapPoint, 'type'> {
         const lines = fileContent.split('\n');
         const totalLines = lines.length;
         
@@ -571,7 +644,6 @@ export class CheckpointManager {
         return {
             x,
             y,
-            type: this.convertChangeType(change.type),
             timestamp: change.timestamp,
             lineNumber: change.lineNumber
         };
@@ -579,5 +651,14 @@ export class CheckpointManager {
 
     async getCurrentMiniMap(filePath: string): Promise<MiniMapData | null> {
         return this.activeModifications.get(filePath)?.miniMap || null;
+    }
+
+    async getMiniMapData(filePath: string): Promise<MiniMapData | null> {
+        const miniMap = await this.getCurrentMiniMap(filePath);
+        if (!miniMap) {
+            vscode.window.showInformationMessage(`No mini map data available for: ${filePath}`);
+            return null;
+        }
+        return miniMap;
     }
 }

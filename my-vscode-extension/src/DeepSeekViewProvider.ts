@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as childProcess from 'child_process';
 
 // Types personnalisés pour les données DeepSeek
 interface DeepSeekActionData {
@@ -538,7 +539,7 @@ export class DeepSeekViewProvider implements vscode.WebviewViewProvider {
             // Get git status for the file
             const gitCommand = `cd "${repositoryPath}" && git diff --unified=0 "${relativePath}"`;
             const result = await new Promise<string>((resolve, reject) => {
-                require('child_process').exec(gitCommand, (error: any, stdout: string) => {
+                childProcess.exec(gitCommand, (error: any, stdout: string) => {
                     if (error && error.code !== 1) { // git diff returns 1 if there are changes
                         reject(error);
                     } else {

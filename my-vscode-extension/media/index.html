@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSCode Checkpoints</title>
+    <link rel="stylesheet" href="${styleUri}">
+</head>
+<body>
+    <div class="tab-container">
+        <button class="tab active" onclick="window.showTab('checkpoints')">Checkpoints</button>
+        <button class="tab" onclick="window.showTab('changes')">Changes History</button>
+    </div>
+
+    <div id="checkpoints" class="tab-content active">
+        <div class="checkpoint-graph" id="checkpointGraph"></div>
+    </div>
+
+    <div id="changes" class="tab-content">
+        <div class="changes-history" id="changesHistory"></div>
+    </div>
+
+    <div id="diffView" style="display: none;">
+        <div id="diffTitle"></div>
+        <div id="originalContent"></div>
+        <div id="modifiedContent"></div>
+        <button onclick="window.closeDiffView()">Fermer</button>
+    </div>
+    <div id="overlay" style="display: none;"></div>
+
+    <script src="${scriptUri}"></script>
+</body>
+</html>
