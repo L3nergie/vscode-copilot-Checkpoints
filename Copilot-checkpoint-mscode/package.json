@@ -1,0 +1,325 @@
+{
+  "name": "my-vscode-extension",
+  "displayName": "MSCode Extension",
+  "description": "Une extension de base pour Visual Studio Code.",
+  "version": "0.0.1",
+  "publisher": "murraystudiocode",
+  "author": {
+    "name": "Murray Studio Code"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/murraystudiocode/mscode-extension"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers",
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "checkpoint",
+    "version control",
+    "AI",
+    "code assistant",
+    "diff"
+  ],
+  "preview": true,
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mscode-sidebar",
+          "title": "MSCode",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mscode-sidebar": [
+        {
+          "type": "webview",
+          "id": "mscodePanel",
+          "name": "MSCode Checkpoints",
+          "icon": "resources/icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "deepseekView",
+          "name": "DeepSeek",
+          "icon": "media/deepseek-icon.png"
+        },
+        {
+          "type": "webview",
+          "id": "mistralView",
+          "name": "Mistral AI",
+          "icon": "media/mistral-icon.png"
+        },
+        {
+          "type": "webview",
+          "id": "geminiView",
+          "name": "Gemini",
+          "icon": "media/gemini-icon.png"
+        },
+        {
+          "type": "webview",
+          "id": "groqView",
+          "name": "Groq",
+          "icon": "media/groq-icon.png"
+        },
+        {
+          "type": "webview",
+          "id": "claudeView",
+          "name": "Claude",
+          "icon": "media/claude-icon.png"
+        },
+        {
+          "type": "webview",
+          "id": "openaiView",
+          "name": "OpenAI",
+          "icon": "media/openai-icon.png"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MSCode",
+      "properties": {
+        "deepseek.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour DeepSeek"
+        },
+        "mistral.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Mistral AI"
+        },
+        "gemini.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Google Gemini"
+        },
+        "groq.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Groq"
+        },
+        "claude.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour Claude (Anthropic)"
+        },
+        "openai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Clé API pour OpenAI"
+        },
+        "mscode.maxSnapshotsPerFile": {
+          "type": "number",
+          "default": 100,
+          "description": "Nombre maximum de snapshots à conserver par fichier"
+        },
+        "mscode.ignoredPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".git",
+            "node_modules",
+            ".mscode",
+            "out",
+            "dist",
+            ".DS_Store"
+          ],
+          "description": "Chemins à ignorer lors du suivi des modifications"
+        },
+        "mscode.checkpointInterval": {
+          "type": "number",
+          "default": 60000,
+          "description": "Intervalle en millisecondes entre les checkpoints automatiques"
+        },
+        "mscode.maxRecursionDepth": {
+          "type": "number",
+          "default": 5,
+          "description": "Profondeur maximum de récursion pour la recherche de fichiers"
+        },
+        "mscode.correction": {
+          "type": "object",
+          "properties": {
+            "targetLanguage": {
+              "type": "string",
+              "enum": [
+                "fr",
+                "en",
+                "es",
+                "auto"
+              ],
+              "default": "fr",
+              "description": "Langue cible pour la traduction"
+            },
+            "autoCorrect": {
+              "type": "boolean",
+              "default": false,
+              "description": "Activer la correction automatique"
+            },
+            "autoCorrectionDelay": {
+              "type": "number",
+              "default": 1000,
+              "description": "Délai avant la correction automatique (ms)"
+            },
+            "correctionRules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "pattern": {
+                    "type": "string",
+                    "description": "Pattern à corriger"
+                  },
+                  "replacement": {
+                    "type": "string",
+                    "description": "Texte de remplacement"
+                  }
+                }
+              },
+              "default": [],
+              "description": "Règles de correction personnalisées"
+            }
+          }
+        },
+        "mscode.assistants": {
+          "type": "object",
+          "properties": {
+            "roles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Nom du rôle"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Description du rôle"
+                  },
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write",
+                        "execute",
+                        "manage"
+                      ]
+                    },
+                    "description": "Permissions accordées au rôle"
+                  }
+                }
+              },
+              "default": [
+                {
+                  "name": "Correcteur",
+                  "description": "Corrige et améliore le code",
+                  "permissions": [
+                    "read",
+                    "write"
+                  ]
+                },
+                {
+                  "name": "Traducteur",
+                  "description": "Traduit les commentaires et la documentation",
+                  "permissions": [
+                    "read",
+                    "write"
+                  ]
+                },
+                {
+                  "name": "Administrateur",
+                  "description": "Gère tous les aspects des checkpoints",
+                  "permissions": [
+                    "read",
+                    "write",
+                    "execute",
+                    "manage"
+                  ]
+                }
+              ]
+            },
+            "defaultAssistant": {
+              "type": "string",
+              "enum": [
+                "deepseek",
+                "mistral",
+                "gemini",
+                "groq",
+                "claude",
+                "openai"
+              ],
+              "default": "mistral",
+              "description": "Assistant AI par défaut"
+            }
+          }
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "mscode.showPanel",
+        "title": "Show MSCode Panel",
+        "category": "MSCode"
+      },
+      {
+        "command": "mscode.reload",
+        "title": "MSCode: Recharger l'extension"
+      },
+      {
+        "command": "mscode.manageResponsibilities",
+        "title": "MSCode: Gérer les responsabilités des assistants",
+        "category": "MSCode"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mscode.reload",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "debug": "code-insiders --extensionDevelopmentPath=${PWD}"
+  },
+  "dependencies": {
+    "@types/minimatch": "^5.1.2",
+    "@types/node": "^20.0.0",
+    "adm-zip": "^0.5.16",
+    "fs-extra": "^11.1.1",
+    "minimatch": "^10.0.1",
+    "shelljs": "^0.8.5"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "@types/diff": "^5.0.0",
+    "@types/fs-extra": "^11.0.1",
+    "@types/node": "^20.0.0",
+    "@types/shelljs": "^0.8.12",
+    "@types/vscode": "^1.85.0",
+    "diff": "^5.0.0",
+    "typescript": "^5.3.0"
+  }
+}

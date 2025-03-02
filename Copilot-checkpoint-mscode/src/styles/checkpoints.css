@@ -1,0 +1,17 @@
+.checkpoint-green {
+    background-color: #28a745;
+    border-color: #28a745;
+}
+
+.checkpoint-red {
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+
+.checkpoint-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 8px;
+    display: inline-block;
+}

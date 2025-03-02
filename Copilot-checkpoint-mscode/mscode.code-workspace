@@ -1,0 +1,21 @@
+
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "debug.allowBreakpointsEverywhere": true,
+        "typescript.tsc.autoDetect": "on",
+        "debug.javascript.usePreview": true,
+        "files.exclude": {
+            "out": false,
+            "dist": false
+        },
+        "search.exclude": {
+            "out": true,
+            "dist": true
+        }
+    }
+}

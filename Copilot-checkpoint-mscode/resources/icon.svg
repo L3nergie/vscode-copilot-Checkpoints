@@ -1,0 +1,35 @@
+<svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#1a1b26;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#24283b;stop-opacity:1" />
+        </linearGradient>
+    </defs>
+    
+    <!-- Fond avec dégradé -->
+    <rect width="128" height="128" fill="url(#bgGradient)" rx="20" />
+    
+    <!-- Cercle lumineux -->
+    <circle cx="64" cy="64" r="40" fill="none" stroke="#7aa2f7" stroke-width="4">
+        <animate attributeName="stroke-opacity" values="0.2;1;0.2" dur="3s" repeatCount="indefinite" />
+    </circle>
+    
+    <!-- Symbole éclair (Copilot) -->
+    <path d="M64 30 L76 64 L64 64 L64 98 L52 64 L64 64 Z" 
+          fill="#7aa2f7" stroke="white" stroke-width="2">
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite" />
+    </path>
+    
+    <!-- Points de checkpoint -->
+    <g transform="translate(64,64)">
+        <circle cx="30" cy="0" r="6" fill="#9ece6a">
+            <animate attributeName="fill-opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite" />
+        </circle>
+        <circle cx="-15" cy="26" r="6" fill="#f7768e">
+            <animate attributeName="fill-opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite" delay="0.5s" />
+        </circle>
+        <circle cx="-15" cy="-26" r="6" fill="#bb9af7">
+            <animate attributeName="fill-opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite" delay="1s" />
+        </circle>
+    </g>
+</svg>
